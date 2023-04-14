@@ -23,20 +23,32 @@ with DAG(
     def data_ingestion(**kwargs):
         ti = kwargs["ti"]
         train_data_path,test_data_path=training_pipeline.start_data_ingestion()
-        ti.xcom_push("data_ingestion_artifact", train_data_path,test_data_path)
+        ti.xcom_push("data_ingestion_artifact", {"train_data_path":train_data_path,"test_data_path":test_data_path})
 
     def data_transformations(**kwargs):
         ti = kwargs["ti"]
-        train_data_path,test_data_path=ti.xcom_pull(task_ids="data_ingestion",key="data_ingestion_artifact")
-        train_arr,test_arr=training_pipeline.start_data_transformation(train_data_path,test_data_path)
-        ti.xcom_push("data_transformations_artifcat", train_arr,test_arr)
+        data_ingestion_artifact=ti.xcom_pull(task_ids="data_ingestion",key="data_ingestion_artifact") 
+        train_arr,test_arr=training_pipeline.start_data_transformation(data_ingestion_artifact["train_data_path"],data_ingestion_artifact["test_data_path"])
+        train_arr=train_arr.tolist()
+        test_arr=test_arr.tolist()
+        ti.xcom_push("data_transformations_artifcat", {"train_arr":train_arr,"test_arr":test_arr})
 
     def model_trainer(**kwargs):
+        import numpy as np
         ti = kwargs["ti"]
-        train_arr,test_arr = ti.xcom_pull(task_ids="data_transformations", key="data_transformations_artifcat")
+        data_transformation_artifact = ti.xcom_pull(task_ids="data_transformation", key="data_transformations_artifcat")
+        train_arr=np.array(data_transformation_artifact["train_arr"])
+        test_arr=np.array(data_transformation_artifact["test_arr"])
         training_pipeline.start_model_training(train_arr,test_arr)
     
-
+    def push_data_to_s3(**kwargs):
+        import os
+        bucket_name=os.getenv("BUCKET_NAME")
+        artifact_folder="/app/artifact"
+        os.system(f"aws s3 sync {artifact_folder} s3:/{bucket_name}/artifact")
+        
+        
+        
     data_ingestion_task = PythonOperator(
         task_id="data_ingestion",
         python_callable=data_ingestion,
@@ -60,7 +72,7 @@ with DAG(
     )
 
     model_trainer_task = PythonOperator(
-        task_id="load",
+        task_id="model_trainer",
         python_callable=model_trainer,
     )
     model_trainer_task.doc_md = dedent(
@@ -69,6 +81,23 @@ with DAG(
     this task perform training
     """
     )
-data_ingestion_task >> data_transform_task >> model_trainer_task
+    
+    model_trainer_task = PythonOperator(
+        task_id="model_trainer",
+        python_callable=model_trainer,
+    )
+    model_trainer_task.doc_md = dedent(
+        """\
+    #### model trainer task
+    this task perform training
+    """
+    )  
+    push_data_to_s3_task = PythonOperator(
+        task_id="push_data_to_s3",
+        python_callable=push_data_to_s3
+        )
+
+
+data_ingestion_task >> data_transform_task >> model_trainer_task >> push_data_to_s3_task
 
 
