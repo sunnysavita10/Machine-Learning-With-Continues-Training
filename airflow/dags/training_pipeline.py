@@ -82,16 +82,7 @@ with DAG(
     """
     )
     
-    model_trainer_task = PythonOperator(
-        task_id="model_trainer",
-        python_callable=model_trainer,
-    )
-    model_trainer_task.doc_md = dedent(
-        """\
-    #### model trainer task
-    this task perform training
-    """
-    )  
+   
     push_data_to_s3_task = PythonOperator(
         task_id="push_data_to_s3",
         python_callable=push_data_to_s3
